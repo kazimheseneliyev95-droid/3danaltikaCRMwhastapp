@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Input } from './ui/Input';
 import { Label } from './ui/Label';
@@ -8,9 +8,11 @@ import { calculateConfidenceInterval, calculateDecomposition } from '../lib/stat
 import { 
   ArrowRight, Target, TrendingUp, DollarSign, MessageSquare, 
   MousePointer, ShoppingCart, RefreshCw, UserPlus, SlidersHorizontal, 
-  ChevronDown, ChevronUp, Save, Trash2, RotateCcw, BarChart3
+  ChevronDown, ChevronUp, Save, Trash2, RotateCcw, BarChart3, Settings, Database
 } from 'lucide-react';
 import { HealthPanel } from './HealthPanel';
+import { MonthlyProjection } from './MonthlyProjection';
+import { useAppStore } from '../context/Store';
 
 // Type for Saved Scenario
 interface Scenario {
@@ -26,6 +28,10 @@ interface Scenario {
 }
 
 export default function FunnelSimulator() {
+  // --- CRM INTEGRATION ---
+  const { getMetrics } = useAppStore();
+  const [useCrmData, setUseCrmData] = useState(false);
+
   // --- REAL INPUTS ---
   const [spend, setSpend] = useState<number>(1.4);
   const [clicks, setClicks] = useState<number>(45);
@@ -34,8 +40,15 @@ export default function FunnelSimulator() {
   const [messages, setMessages] = useState<number>(6);
   const [potential, setPotential] = useState<number>(3);
   const [sales, setSales] = useState<number>(0);
-  const [aov, setAov] = useState<number>(35);
+  
+  // UPDATED: Default AOV is 25 AZN
+  const [aov, setAov] = useState<number>(25);
+  
+  // UPDATED: Default Assumed Close Rate is 15%
   const [assumedCloseRate, setAssumedCloseRate] = useState<number>(15);
+
+  // NEW: Exchange Rate (1 USD = X AZN)
+  const [exchangeRate, setExchangeRate] = useState<number>(1.70);
 
   // --- BENCHMARK INPUTS (7-Day Avg) ---
   const [showBenchmarks, setShowBenchmarks] = useState(false);
@@ -58,6 +71,16 @@ export default function FunnelSimulator() {
   // --- TARGET INPUTS ---
   const [targetSales, setTargetSales] = useState<number>(10);
 
+  // --- EFFECT: SYNC WITH CRM ---
+  useEffect(() => {
+    if (useCrmData) {
+      const metrics = getMetrics();
+      setMessages(metrics.messages);
+      setPotential(metrics.potential);
+      setSales(metrics.sales);
+    }
+  }, [useCrmData, getMetrics]); // In a real app, we'd listen to store changes more directly
+
   // --- CALCULATIONS: REAL ---
   const effectiveClicks = useMemo(() => {
     if (clicks > 0) return clicks;
@@ -72,20 +95,23 @@ export default function FunnelSimulator() {
   
   const hasPotentialData = potential > 0;
   
-  // Logic Fix: If we have potential data, Close Rate is Sales/Potential.
-  // If we don't, it's Sales/Messages.
+  // UPDATED: If sales are 0, default to assumedCloseRate (15%)
   const realCloseRate = useMemo(() => {
-    if (sales === 0 && !hasPotentialData) return assumedCloseRate;
+    if (sales === 0) return assumedCloseRate;
     if (hasPotentialData) return potential > 0 ? (sales / potential) * 100 : 0;
     return messages > 0 ? (sales / messages) * 100 : 0;
   }, [sales, potential, messages, assumedCloseRate, hasPotentialData]);
 
-  const realRoas = spend > 0 ? (sales * aov) / spend : 0;
+  // UPDATED: ROAS Calculation (Revenue in USD / Spend in USD)
+  // Revenue AZN = sales * aov
+  // Revenue USD = Revenue AZN / exchangeRate
+  const realRevenueAZN = sales * aov;
+  const realRevenueUSD = exchangeRate > 0 ? realRevenueAZN / exchangeRate : 0;
+  const realRoas = spend > 0 ? realRevenueUSD / spend : 0;
 
   // --- CALCULATIONS: STATISTICS & RANGES (Wilson Score) ---
   const [msgRateLow, msgRateHigh] = calculateConfidenceInterval(messages, effectiveClicks);
   
-  // For Close Rate range, base it on the step immediately preceding sales
   const [closeRateLow, closeRateHigh] = hasPotentialData 
     ? calculateConfidenceInterval(sales, potential)
     : calculateConfidenceInterval(sales, messages);
@@ -95,18 +121,12 @@ export default function FunnelSimulator() {
   const simMsgRate = overrideMsgRate ? parseFloat(overrideMsgRate) : realMsgRate;
   const simPotentialRate = overridePotentialRate ? parseFloat(overridePotentialRate) : realPotentialRate;
   
-  // Logic Fix: If user overrides Potential Rate but didn't have potential data before,
-  // we must ensure the Close Rate makes sense. 
-  // If Real Data was Msg->Sale (e.g. 5%), but Sim is Msg->Pot->Sale, 
-  // the Close Rate (Pot->Sale) should likely be higher than Msg->Sale.
-  // For now, we use the override or the real rate, but the user should be aware.
   const simCloseRate = overrideCloseRate ? parseFloat(overrideCloseRate) : realCloseRate;
 
   // Calculate Sim Flow
   const simClicks = simCpc > 0 ? Math.floor(simBudget / simCpc) : 0;
   const simMessages = Math.floor(simClicks * (simMsgRate / 100));
   
-  // Determine if simulation uses Potential step
   const simHasPotential = hasPotentialData || overridePotentialRate !== "";
   
   const simPotential = simHasPotential 
@@ -118,7 +138,6 @@ export default function FunnelSimulator() {
     : Math.floor(simMessages * (simCloseRate / 100));
 
   // Ranges for Simulation (using relative deviation from real data stats)
-  // We apply the same % uncertainty from real data to the sim data
   const msgRateUncertainty = realMsgRate > 0 ? (realMsgRate - msgRateLow) / realMsgRate : 0.2;
   const closeRateUncertainty = realCloseRate > 0 ? (realCloseRate - closeRateLow) / realCloseRate : 0.2;
 
@@ -128,9 +147,11 @@ export default function FunnelSimulator() {
   const simSalesLow = Math.floor(simSales * (1 - closeRateUncertainty));
   const simSalesHigh = Math.ceil(simSales * (1 + closeRateUncertainty));
 
-  const simRevenue = simSales * aov;
-  const simRoas = simBudget > 0 ? simRevenue / simBudget : 0;
-  const simCac = simSales > 0 ? simBudget / simSales : 0;
+  // UPDATED: Sim Financials
+  const simRevenueAZN = simSales * aov;
+  const simRevenueUSD = exchangeRate > 0 ? simRevenueAZN / exchangeRate : 0;
+  const simRoas = simBudget > 0 ? simRevenueUSD / simBudget : 0;
+  const simCac = simSales > 0 ? simBudget / simSales : 0; // CAC is in USD (Spend / Sales)
 
   // --- ACTIONS ---
   const handleResetOverrides = () => {
@@ -179,12 +200,16 @@ export default function FunnelSimulator() {
   }, [showBenchmarks, spend, realCpc, realMsgRate, realCloseRate, benchCpc, benchMsgRate, benchCloseRate]);
 
   // --- TARGET CALCULATOR ---
-  const reqPotential = simHasPotential
+  const isTargetPossible = simCloseRate > 0 && simMsgRate > 0 && (!simHasPotential || simPotentialRate > 0);
+  
+  const reqPotential = (isTargetPossible && simHasPotential)
     ? Math.ceil(targetSales / (simCloseRate / 100)) : 0;
-  const reqMessages = simHasPotential
-    ? Math.ceil(reqPotential / (simPotentialRate / 100))
-    : Math.ceil(targetSales / (simCloseRate / 100));
-  const reqClicks = Math.ceil(reqMessages / (simMsgRate / 100));
+    
+  const reqMessages = isTargetPossible
+    ? (simHasPotential ? Math.ceil(reqPotential / (simPotentialRate / 100)) : Math.ceil(targetSales / (simCloseRate / 100)))
+    : 0;
+    
+  const reqClicks = isTargetPossible ? Math.ceil(reqMessages / (simMsgRate / 100)) : 0;
   const reqBudget = reqClicks * simCpc;
 
   return (
@@ -219,6 +244,23 @@ export default function FunnelSimulator() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
+
+              {/* CRM SYNC TOGGLE */}
+              <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-green-400" />
+                  <span className="text-sm font-medium">Sync with CRM</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-500">{useCrmData ? 'Active' : 'Manual'}</span>
+                  <button 
+                    onClick={() => setUseCrmData(!useCrmData)} 
+                    className={cn("w-8 h-4 rounded-full transition-colors relative", useCrmData ? "bg-green-500" : "bg-slate-700")}
+                  >
+                    <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all", useCrmData ? "left-4.5" : "left-0.5")} />
+                  </button>
+                </div>
+              </div>
               
               {/* Benchmark Section */}
               {showBenchmarks && (
@@ -278,23 +320,59 @@ export default function FunnelSimulator() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Messages</Label>
-                  <Input type="number" value={messages} onChange={(e) => setMessages(parseFloat(e.target.value) || 0)} className="border-yellow-500/20 focus:border-yellow-500"/>
+                  <Input 
+                    type="number" 
+                    value={messages} 
+                    onChange={(e) => setMessages(parseFloat(e.target.value) || 0)} 
+                    className="border-yellow-500/20 focus:border-yellow-500 disabled:opacity-50"
+                    disabled={useCrmData}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-purple-300">Potential</Label>
-                  <Input type="number" value={potential} onChange={(e) => setPotential(parseFloat(e.target.value) || 0)} className="border-purple-500/30 focus:border-purple-500 bg-purple-500/5"/>
+                  <Input 
+                    type="number" 
+                    value={potential} 
+                    onChange={(e) => setPotential(parseFloat(e.target.value) || 0)} 
+                    className="border-purple-500/30 focus:border-purple-500 bg-purple-500/5 disabled:opacity-50"
+                    disabled={useCrmData}
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Sales</Label>
-                  <Input type="number" value={sales} onChange={(e) => setSales(parseFloat(e.target.value) || 0)} className="border-yellow-500/20 focus:border-yellow-500"/>
+                  <Input 
+                    type="number" 
+                    value={sales} 
+                    onChange={(e) => setSales(parseFloat(e.target.value) || 0)} 
+                    className="border-yellow-500/20 focus:border-yellow-500 disabled:opacity-50"
+                    disabled={useCrmData}
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label>AOV ($)</Label>
+                  <Label>AOV (AZN)</Label>
                   <Input type="number" value={aov} onChange={(e) => setAov(parseFloat(e.target.value) || 0)} className="border-yellow-500/20 focus:border-yellow-500"/>
                 </div>
+              </div>
+
+              {/* Exchange Rate Settings */}
+              <div className="p-3 bg-slate-900/50 rounded-lg border border-slate-800 space-y-2">
+                 <div className="flex items-center gap-2 text-slate-400 mb-1">
+                   <Settings className="w-3 h-3" />
+                   <span className="text-[10px] uppercase font-bold">Currency Settings</span>
+                 </div>
+                 <div className="grid grid-cols-2 gap-4">
+                   <div className="space-y-1">
+                     <Label className="text-[10px]">1 USD = ? AZN</Label>
+                     <Input type="number" value={exchangeRate} onChange={(e) => setExchangeRate(parseFloat(e.target.value) || 0)} className="h-7 text-xs bg-slate-950" />
+                   </div>
+                   <div className="space-y-1">
+                     <Label className="text-[10px]">Default Close%</Label>
+                     <Input type="number" value={assumedCloseRate} onChange={(e) => setAssumedCloseRate(parseFloat(e.target.value) || 0)} className="h-7 text-xs bg-slate-950" />
+                   </div>
+                 </div>
               </div>
 
               {/* Real Metrics with Confidence Ranges */}
@@ -462,19 +540,37 @@ export default function FunnelSimulator() {
             />
             <ResultCard 
               icon={<DollarSign className="w-4 h-4 text-yellow-400" />}
-              label="Revenue"
-              value={formatCurrency(simRevenue)}
+              label="Revenue (AZN)"
+              value={formatCurrency(simRevenueAZN, 'AZN')}
               subValue={`ROAS: ${formatNumber(simRoas, 2)}x`}
               highlightColor="yellow"
+              isLarge
             />
           </div>
 
-          {/* Target Reverse Calculator */}
+          {/* --- NEW MONTHLY PROJECTION SECTION --- */}
+          <MonthlyProjection 
+            inputs={{
+              cpc: simCpc,
+              msgRate: simMsgRate,
+              closeRate: simCloseRate,
+              potentialRate: simPotentialRate,
+              aov: aov,
+              hasPotential: simHasPotential,
+              exchangeRate: exchangeRate
+            }}
+            uncertainty={{
+              msgRate: msgRateUncertainty,
+              closeRate: closeRateUncertainty
+            }}
+          />
+
+          {/* Target Reverse Calculator (Simple) */}
           <Card className="border-t border-slate-800 bg-slate-900/30">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2 text-slate-300">
                 <Target className="w-4 h-4" />
-                Target Calculator
+                Quick Target Calculator
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -488,11 +584,11 @@ export default function FunnelSimulator() {
                 </div>
                 <ArrowRight className="hidden md:block text-slate-600" />
                 <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-4 w-full">
-                  <TargetResult label="Budget" value={formatCurrency(reqBudget)} />
-                  <TargetResult label="Clicks" value={formatNumber(reqClicks)} />
-                  <TargetResult label="Messages" value={formatNumber(reqMessages)} />
+                  <TargetResult label="Budget ($)" value={isTargetPossible ? formatCurrency(reqBudget) : "-"} />
+                  <TargetResult label="Clicks" value={isTargetPossible ? formatNumber(reqClicks) : "-"} />
+                  <TargetResult label="Messages" value={isTargetPossible ? formatNumber(reqMessages) : "-"} />
                   {simHasPotential && (
-                    <TargetResult label="Potential" value={formatNumber(reqPotential)} color="purple" />
+                    <TargetResult label="Potential" value={isTargetPossible ? formatNumber(reqPotential) : "-"} color="purple" />
                   )}
                 </div>
               </div>
@@ -530,7 +626,7 @@ function OverrideInput({ label, placeholder, value, onChange, color = "slate" }:
   );
 }
 
-function ResultCard({ icon, label, value, subValue, range, highlightColor, disabled }: any) {
+function ResultCard({ icon, label, value, subValue, range, highlightColor, disabled, isLarge }: any) {
   const getHighlightClass = () => {
     if (disabled) return "bg-slate-950/50 border-slate-800/50 opacity-50";
     switch(highlightColor) {
@@ -548,7 +644,8 @@ function ResultCard({ icon, label, value, subValue, range, highlightColor, disab
         {icon}
       </div>
       <div>
-        <div className={cn("text-xl font-bold text-slate-200")}>{value}</div>
+        {/* Increased Font Size */}
+        <div className={cn("font-bold text-slate-200", isLarge ? "text-2xl" : "text-xl")}>{value}</div>
         {range && <div className="text-[10px] text-slate-400 font-mono mt-0.5">Range: {range}</div>}
         <div className="text-[10px] text-slate-500 mt-1 font-mono">{subValue}</div>
       </div>
