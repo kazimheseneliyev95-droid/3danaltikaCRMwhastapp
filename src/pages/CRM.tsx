@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '../context/Store';
 import { Lead, LeadStatus } from '../types/crm';
-import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Input } from '../components/ui/Input';
 import { WhatsAppConnect } from '../components/WhatsAppConnect';
+import { LeadForm } from '../components/LeadForm';
 import { 
   MessageSquare, UserPlus, CheckCircle, XCircle, Plus, 
-  Phone, Trash2, Calendar, Filter, RefreshCcw 
+  Phone, Trash2, Calendar, Filter, RefreshCcw, Eraser
 } from 'lucide-react';
 
 export default function CRMPage() {
@@ -22,49 +22,15 @@ export default function CRMPage() {
     setDateRange
   } = useAppStore();
 
-  const [isSimulating, setIsSimulating] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
 
-  // Auto-Simulation Effect when Connected
-  useEffect(() => {
-    let interval: any;
-    if (isWhatsAppConnected) {
-      interval = setInterval(() => {
-        // 20% chance to get a message every 5 seconds
-        if (Math.random() > 0.8) {
-          simulateIncomingMessage(true);
-        }
-      }, 5000);
+  // NOTE: Simulation Logic Removed. 
+  // We now rely on Manual Entry or (in future) Real Backend WebSocket.
+
+  const handleClearAll = () => {
+    if (confirm("Are you sure you want to delete ALL local data? This cannot be undone.")) {
+      leads.forEach(l => removeLead(l.id));
     }
-    return () => clearInterval(interval);
-  }, [isWhatsAppConnected]);
-
-  const simulateIncomingMessage = (auto = false) => {
-    if (!auto) setIsSimulating(true);
-    
-    setTimeout(() => {
-      const randomNames = ['+994 50 222 33 44', 'Ali Mammadov', '+994 55 111 22 33', 'Leyla H.', 'Murad Aliyev', 'Nigar Q.'];
-      const randomMsgs = [
-        'Salam, qiymət?', // Should go to Potential
-        'Çatdırılma neçəyədir?', 
-        'Sizdə bu məhsul var?', 
-        'Sifariş etmək istəyirəm', // Should go to Won/Potential
-        'Endirim edirsiniz?',
-        'Salam'
-      ];
-      
-      const msg = randomMsgs[Math.floor(Math.random() * randomMsgs.length)];
-
-      addLead({
-        phone: randomNames[Math.floor(Math.random() * randomNames.length)],
-        name: 'Unknown User',
-        last_message: msg,
-        status: 'new', // The Store will auto-sort this based on content
-        value: 0,
-        source: 'whatsapp'
-      });
-      
-      if (!auto) setIsSimulating(false);
-    }, 800);
   };
 
   const columns: { id: LeadStatus; title: string; color: string; icon: any }[] = [
@@ -85,8 +51,8 @@ export default function CRMPage() {
             WhatsApp CRM
           </h1>
           <p className="text-slate-400 mt-1 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            Real-time pipeline management
+            <span className={isWhatsAppConnected ? "w-2 h-2 rounded-full bg-green-500 animate-pulse" : "w-2 h-2 rounded-full bg-red-500"}></span>
+            {isWhatsAppConnected ? "Live Connection Active" : "Offline Mode (Manual Entry)"}
           </p>
         </div>
 
@@ -112,8 +78,14 @@ export default function CRMPage() {
             />
             {(dateRange.start || dateRange.end) && (
               <button 
-                onClick={() => setDateRange({ start: null, end: null })}
+                onClick={() => {
+                   const now = new Date();
+                   const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+                   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+                   setDateRange({ start, end });
+                }}
                 className="p-1 hover:bg-slate-800 rounded text-slate-400"
+                title="Reset to Current Month"
               >
                 <RefreshCcw className="w-3 h-3" />
               </button>
@@ -127,18 +99,34 @@ export default function CRMPage() {
             onDisconnect={toggleWhatsAppConnection}
           />
           
-          {/* MANUAL SIMULATION */}
-          {!isWhatsAppConnected && (
-            <button 
-              onClick={() => simulateIncomingMessage(false)}
-              disabled={isSimulating}
-              className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg flex items-center gap-2 text-sm transition-all active:scale-95 disabled:opacity-50"
-            >
-              {isSimulating ? 'Receiving...' : <><Plus className="w-4 h-4" /> Test Msg</>}
-            </button>
+          {/* MANUAL ADD BUTTON */}
+          <button 
+            onClick={() => setShowAddForm(true)}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm transition-all shadow-lg shadow-blue-900/20"
+          >
+            <Plus className="w-4 h-4" /> Add Lead
+          </button>
+
+          {/* CLEAR DATA BUTTON */}
+          {leads.length > 0 && (
+             <button 
+               onClick={handleClearAll}
+               className="bg-red-950/30 hover:bg-red-900/50 text-red-400 px-3 py-2 rounded-lg flex items-center gap-2 text-xs transition-all border border-red-900/30"
+               title="Clear all local data"
+             >
+               <Eraser className="w-4 h-4" />
+             </button>
           )}
         </div>
       </div>
+
+      {/* ADD FORM MODAL */}
+      {showAddForm && (
+        <LeadForm 
+          onSave={addLead}
+          onCancel={() => setShowAddForm(false)}
+        />
+      )}
 
       {/* KANBAN BOARD */}
       <div className="flex-1 overflow-x-auto pb-4">
@@ -173,7 +161,7 @@ export default function CRMPage() {
                     <div className="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center">
                       <span className="text-xs">0</span>
                     </div>
-                    No leads in this stage
+                    No leads here
                   </div>
                 )}
               </div>
@@ -196,20 +184,33 @@ function LeadCard({ lead, onUpdateStatus, onRemove }: { lead: Lead, onUpdateStat
             <Phone className="w-3 h-3 text-green-500" />
             {lead.phone}
           </div>
-          <span className="text-[10px] text-slate-500 flex items-center gap-1">
-            <Calendar className="w-2.5 h-2.5" /> {dateStr}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500 flex items-center gap-1">
+              <Calendar className="w-2.5 h-2.5" /> {dateStr}
+            </span>
+            {lead.name && lead.name !== 'Unknown' && (
+              <span className="text-[10px] text-blue-400 bg-blue-950/30 px-1 rounded">{lead.name}</span>
+            )}
+          </div>
         </div>
         <button onClick={() => onRemove(lead.id)} className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">
           <Trash2 className="w-3 h-3" />
         </button>
       </div>
       
-      <div className="bg-slate-900/50 p-2 rounded mb-3 border border-slate-800/50">
-        <p className="text-xs text-slate-300 line-clamp-2 italic">
-          "{lead.last_message}"
-        </p>
-      </div>
+      {lead.last_message && (
+        <div className="bg-slate-900/50 p-2 rounded mb-3 border border-slate-800/50">
+          <p className="text-xs text-slate-300 line-clamp-2 italic">
+            "{lead.last_message}"
+          </p>
+        </div>
+      )}
+
+      {lead.value && lead.value > 0 ? (
+        <div className="mb-2 text-xs font-mono text-green-400 flex items-center gap-1">
+          <DollarSign className="w-3 h-3" /> {lead.value} AZN
+        </div>
+      ) : null}
 
       {/* Quick Actions */}
       <div className="flex gap-1 mt-2 opacity-80 hover:opacity-100 transition-opacity">

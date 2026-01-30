@@ -25,7 +25,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isWhatsAppConnected, setIsWhatsAppConnected] = useState(false);
-  const [dateRange, setDateRange] = useState<DateRange>({ start: null, end: null });
+  
+  // Initialize Date Range to Current Month (Local Time)
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const now = new Date();
+    // Get first day of current month in local time
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    // Get last day of current month in local time
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0); 
+    
+    // Format to YYYY-MM-DD using local time logic to avoid UTC shifts
+    const toLocalISO = (date: Date) => {
+      const offset = date.getTimezoneOffset() * 60000;
+      return new Date(date.getTime() - offset).toISOString().split('T')[0];
+    };
+    
+    return {
+      start: toLocalISO(start),
+      end: toLocalISO(end)
+    };
+  });
 
   // Initial Load & Filter Effect
   useEffect(() => {
