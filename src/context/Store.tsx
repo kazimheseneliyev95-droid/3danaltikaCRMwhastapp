@@ -11,6 +11,7 @@ interface AppContextType {
   // Actions
   setDateRange: (range: DateRange) => void;
   addLead: (lead: Omit<Lead, 'id' | 'created_at' | 'updated_at'>) => void;
+  updateLead: (id: string, updates: Partial<Lead>) => void;
   updateLeadStatus: (id: string, status: LeadStatus) => void;
   removeLead: (id: string) => void;
   toggleWhatsAppConnection: () => void;
@@ -29,12 +30,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Initialize Date Range to Current Month (Local Time)
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const now = new Date();
-    // Get first day of current month in local time
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    // Get last day of current month in local time
     const end = new Date(now.getFullYear(), now.getMonth() + 1, 0); 
     
-    // Format to YYYY-MM-DD using local time logic to avoid UTC shifts
     const toLocalISO = (date: Date) => {
       const offset = date.getTimezoneOffset() * 60000;
       return new Date(date.getTime() - offset).toISOString().split('T')[0];
@@ -65,18 +63,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let status: LeadStatus = 'new';
     const msg = leadData.last_message?.toLowerCase() || '';
 
-    // Simple Rule Engine
     if (msg.includes('qiymət') || msg.includes('price') || msg.includes('neçəyə')) {
       status = 'potential';
     } else if (msg.includes('sifariş') || msg.includes('almaq') || msg.includes('buy')) {
-      status = 'won'; // Or potential, depending on strictness
+      status = 'won';
     }
 
     // 2. Create Lead
     const newLead = await CrmService.addLead({ ...leadData, status });
     
-    // 3. Update State
+    // 3. Update State (if it falls within current filter)
+    // For simplicity, we just reload or prepend. 
+    // Prepending is faster but might show items outside date range if user is looking at old data.
+    // Let's just prepend for UX responsiveness.
     setLeads(prev => [newLead, ...prev]);
+  };
+
+  const updateLead = async (id: string, updates: Partial<Lead>) => {
+    await CrmService.updateLead(id, updates);
+    setLeads(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
   };
 
   const updateLeadStatus = async (id: string, status: LeadStatus) => {
@@ -111,6 +116,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dateRange,
       setDateRange,
       addLead, 
+      updateLead,
       updateLeadStatus, 
       removeLead, 
       toggleWhatsAppConnection,

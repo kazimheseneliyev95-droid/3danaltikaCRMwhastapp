@@ -7,20 +7,37 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
+// Health check endpoint for Render
+app.get('/', (req, res) => {
+  res.send('WhatsApp CRM Backend is Running!');
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // Allow connections from the frontend
+    origin: "*", // Allow connections from any frontend (Netlify/Render)
     methods: ["GET", "POST"]
   }
 });
 
 // Initialize WhatsApp Client
+// We use special settings for Docker/Render environments
 const client = new Client({
-  authStrategy: new LocalAuth(),
+  authStrategy: new LocalAuth({
+    dataPath: '/opt/render/project/src/server/.wwebjs_auth' // Persistent path for Render
+  }),
   puppeteer: {
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu'
+    ],
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
   }
 });
 
@@ -72,7 +89,8 @@ console.log("Initializing WhatsApp Client...");
 client.initialize();
 
 // Start Server
-const PORT = 3001;
+// Render assigns a dynamic port in process.env.PORT
+const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

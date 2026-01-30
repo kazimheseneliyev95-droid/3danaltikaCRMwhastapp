@@ -1,35 +1,51 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Input } from './ui/Input';
 import { Label } from './ui/Label';
-import { X, Save, Phone, User, MessageSquare, DollarSign } from 'lucide-react';
+import { X, Save, Phone, User, MessageSquare, DollarSign, ShoppingBag } from 'lucide-react';
 import { Lead } from '../types/crm';
 
 interface LeadFormProps {
-  onSave: (lead: Omit<Lead, 'id' | 'created_at' | 'updated_at'>) => void;
+  initialData?: Lead;
+  onSave: (lead: any) => void;
   onCancel: () => void;
 }
 
-export function LeadForm({ onSave, onCancel }: LeadFormProps) {
+export function LeadForm({ initialData, onSave, onCancel }: LeadFormProps) {
   const [formData, setFormData] = useState({
     phone: '',
     name: '',
     message: '',
-    value: ''
+    value: '',
+    product_name: ''
   });
+
+  useEffect(() => {
+    if (initialData) {
+      setFormData({
+        phone: initialData.phone,
+        name: initialData.name || '',
+        message: initialData.last_message || '',
+        value: initialData.value ? initialData.value.toString() : '',
+        product_name: initialData.product_name || ''
+      });
+    }
+  }, [initialData]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.phone) return;
 
-    onSave({
+    const data = {
       phone: formData.phone,
       name: formData.name || 'Unknown',
       last_message: formData.message,
       value: parseFloat(formData.value) || 0,
-      status: 'new', // Default status
-      source: 'manual'
-    });
+      product_name: formData.product_name,
+      source: initialData ? initialData.source : 'manual'
+    };
+
+    onSave(data);
     onCancel();
   };
 
@@ -39,7 +55,7 @@ export function LeadForm({ onSave, onCancel }: LeadFormProps) {
         <CardHeader className="flex flex-row items-center justify-between border-b border-slate-800 pb-4">
           <CardTitle className="text-lg font-bold text-white flex items-center gap-2">
             <User className="w-5 h-5 text-blue-500" />
-            Add Real Lead
+            {initialData ? 'Edit Lead' : 'Add Real Lead'}
           </CardTitle>
           <button onClick={onCancel} className="text-slate-400 hover:text-white transition-colors">
             <X className="w-5 h-5" />
@@ -69,6 +85,18 @@ export function LeadForm({ onSave, onCancel }: LeadFormProps) {
                 placeholder="Ali Mammadov" 
                 value={formData.name}
                 onChange={e => setFormData({...formData, name: e.target.value})}
+                className="bg-slate-950 border-slate-800 focus:border-blue-500"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <ShoppingBag className="w-3 h-3" /> Order Name (Product)
+              </Label>
+              <Input 
+                placeholder="iPhone 15 Case, etc." 
+                value={formData.product_name}
+                onChange={e => setFormData({...formData, product_name: e.target.value})}
                 className="bg-slate-950 border-slate-800 focus:border-blue-500"
               />
             </div>
@@ -111,7 +139,7 @@ export function LeadForm({ onSave, onCancel }: LeadFormProps) {
                 className="flex-1 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 font-medium text-sm transition-colors flex items-center justify-center gap-2"
               >
                 <Save className="w-4 h-4" />
-                Save Lead
+                {initialData ? 'Update Lead' : 'Save Lead'}
               </button>
             </div>
 

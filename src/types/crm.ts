@@ -4,6 +4,7 @@ export interface Lead {
   id: string;
   phone: string;
   name?: string;
+  product_name?: string; // Added Product/Order Name
   status: LeadStatus;
   last_message?: string;
   value?: number;
@@ -23,6 +24,7 @@ export interface DateRange {
   - id: uuid (PK)
   - phone: text
   - name: text
+  - product_name: text
   - status: text
   - last_message: text
   - value: numeric

@@ -1,0 +1,21 @@
+services:
+  # 1. The Backend (Node.js + WhatsApp)
+  - type: web
+    name: whatsapp-crm-backend
+    env: docker
+    dockerContext: ./server
+    dockerfilePath: ./server/Dockerfile
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 10000
+
+  # 2. The Frontend (React + Vite)
+  - type: web
+    name: whatsapp-crm-frontend
+    env: static
+    buildCommand: yarn install && yarn build
+    staticPublishPath: ./dist
+    plan: free
+    autoDeploy: true
