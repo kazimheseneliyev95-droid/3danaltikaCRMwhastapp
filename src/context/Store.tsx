@@ -102,7 +102,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         console.error('Failed to save live lead:', err);
       }
-    });
+    }); \r\n\r\n    // Listen for lead updates (status changes, etc.)\r\n    CrmService.onLeadUpdated(async (updatedLead) => {\r\n      console.log('🔄 LEAD UPDATED:', updatedLead);\r\n      \r\n      // Update UI state\r\n      setLeads((prev) => {\r\n        const existingIndex = prev.findIndex(l =>\r\n          l.id === updatedLead.id || l.phone === updatedLead.phone\r\n        );\r\n\r\n        if (existingIndex !== -1) {\r\n          console.log('✅ Updating lead in UI:', updatedLead.phone);\r\n          const newList = [...prev];\r\n          newList[existingIndex] = updatedLead;\r\n          return newList;\r\n        }\r\n\r\n        console.log('⚠️ Lead not found in UI, adding:', updatedLead.phone);\r\n        return [updatedLead, ...prev];\r\n      });\r\n    });
 
     // 🧪 TEST MODE LISTENER
     CrmService.onTestMessage((data: any) => {

@@ -10,6 +10,7 @@ class CrmServiceImpl {
   private qrCallback: ((qr: string) => void) | null = null;
   private authCallback: (() => void) | null = null;
   private messageListeners: ((lead: Lead) => void)[] = [];
+  private leadUpdateListeners: ((lead: Lead) => void)[] = [];
   private testMessageListeners: ((data: any) => void)[] = [];
   private healthListeners: ((health: any) => void)[] = [];
 
@@ -132,17 +133,17 @@ class CrmServiceImpl {
     if (!this.socket) return;
 
     this.socket.on('qr_code', (qr) => {
-      console.log('⚡ SOCKET: qr_code received');
+      console.log('📱 QR RECEIVED');
       if (this.qrCallback) this.qrCallback(qr);
     });
 
     this.socket.on('authenticated', () => {
+      console.log('🔑 AUTHENTICATED');
       if (this.authCallback) this.authCallback();
     });
 
-    // 🧪 Test Mode Event Handler
     this.socket.on('crm:test_incoming_message', (data: any) => {
-      console.log('📥 FRONTEND EVENT RECEIVED: crm:test_incoming_message');
+      console.log('🧪 TEST MESSAGE:', data);
       this.testMessageListeners.forEach(cb => cb(data));
     });
 
@@ -198,7 +199,25 @@ class CrmServiceImpl {
       };
 
       const savedLead = await this.addLead(newLead);
+      console.log('✨ New lead saved:', savedLead.phone);
       this.messageListeners.forEach(cb => cb(savedLead));
+    });
+
+    // 🆕 NEW: Listen for database updates (status changes, etc.)
+    this.socket.on('lead_updated', async (updatedLead: Lead) => {
+      console.log('🔄 SOCKET: lead_updated received', updatedLead);
+
+      // Update localStorage to match database
+      const existingLeads = await this.getLeads();
+      const index = existingLeads.findIndex(l => l.phone === updatedLead.phone);
+
+      if (index !== -1) {
+        await this.updateLead(existingLeads[index].id, updatedLead);
+        console.log('✅ Lead synced with database');
+
+        // Notify UI to refresh - use dedicated leadUpdateListeners
+        this.leadUpdateListeners.forEach(cb => cb(updatedLead));
+      }
     });
   }
 
@@ -213,6 +232,10 @@ class CrmServiceImpl {
 
   onNewMessage(cb: (lead: Lead) => void) {
     this.messageListeners.push(cb);
+  }
+
+  onLeadUpdated(cb: (lead: Lead) => void) {
+    this.leadUpdateListeners.push(cb);
   }
 
   onTestMessage(cb: (data: any) => void) {
