@@ -3,6 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { faker } from '@faker-js/faker';
 
 const STORAGE_KEY = 'dualite_crm_leads_v2';
+const SERVER_URL_KEY = 'dualite_server_url'; // NEW: Persist server URL
 
 class CrmServiceImpl {
   private socket: Socket | null = null;
@@ -20,6 +21,9 @@ class CrmServiceImpl {
 
   // --- SERVER CONNECTION ---
   getServerUrl() {
+    // Check localStorage first for persisted URL
+    const saved = localStorage.getItem(SERVER_URL_KEY);
+    if (saved) return saved;
     return this.serverUrl || import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
   }
 
@@ -33,6 +37,10 @@ class CrmServiceImpl {
 
     this.isDemoMode = false;
     this.serverUrl = url;
+
+    // PERSIST SERVER URL
+    localStorage.setItem(SERVER_URL_KEY, url);
+    console.log('💾 Server URL saved to localStorage:', url);
 
     try {
       // Disconnect existing socket if any
