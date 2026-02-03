@@ -346,6 +346,6 @@ app.use((req, res, next) => {
   res.sendFile(path.join(DIST_PATH, 'index.html'));
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
