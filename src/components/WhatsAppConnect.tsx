@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import QRCode from 'react-qr-code';
-import { Smartphone, X, Server, Wifi, WifiOff, RefreshCw, PlayCircle, AlertTriangle } from 'lucide-react';
+import { Smartphone, X, Server, Wifi, WifiOff, RefreshCw, PlayCircle } from 'lucide-react';
 import { Card, CardContent } from './ui/Card';
 import { Input } from './ui/Input';
 import { cn } from '../lib/utils';
@@ -14,34 +14,48 @@ interface WhatsAppConnectProps {
 
 export function WhatsAppConnect({ isConnected, onConnect, onDisconnect }: WhatsAppConnectProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [serverUrl, setServerUrl] = useState('http://localhost:3001');
+  const [serverUrl, setServerUrl] = useState('http://localhost:4000');
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline' | 'demo'>('offline');
   const [qrCode, setQrCode] = useState<string>('');
 
   // Check Server Status
   const checkServer = async (url: string = serverUrl) => {
     setServerStatus('checking');
+    setQrCode(''); // Reset QR code
+
     try {
+      console.log('🔌 Attempting to connect to:', url);
       const isOnline = await CrmService.connectToServer(url);
       setServerStatus(url === 'demo' ? 'demo' : (isOnline ? 'online' : 'offline'));
-      
+
       if (isOnline) {
+        console.log('✅ Server connection successful!');
         // Start listening for QR
-        CrmService.onQrCode((qr) => setQrCode(qr));
+        CrmService.onQrCode((qr) => {
+          console.log('📱 QR Code received!');
+          setQrCode(qr);
+        });
         CrmService.onAuthenticated(() => {
+          console.log('✅ WhatsApp authenticated!');
           onConnect();
           setIsOpen(false);
+          setQrCode('');
         });
+      } else {
+        console.error('❌ Server connection failed');
       }
     } catch (e) {
+      console.error('❌ Connection error:', e);
       setServerStatus('offline');
     }
   };
 
   const handleDisconnect = () => {
+    console.log('🔌 Disconnecting from WhatsApp...');
     CrmService.disconnect();
     onDisconnect();
     setServerStatus('offline');
+    setQrCode('');
   };
 
   useEffect(() => {
@@ -52,7 +66,7 @@ export function WhatsAppConnect({ isConnected, onConnect, onDisconnect }: WhatsA
 
   if (isConnected) {
     return (
-      <div className={cn("flex items-center gap-3 border px-4 py-2 rounded-lg animate-in fade-in", 
+      <div className={cn("flex items-center gap-3 border px-4 py-2 rounded-lg animate-in fade-in",
         serverStatus === 'demo' ? "bg-blue-950/30 border-blue-900/50" : "bg-green-950/30 border-green-900/50")}>
         <div className="relative">
           <Smartphone className={cn("w-5 h-5", serverStatus === 'demo' ? "text-blue-400" : "text-green-400")} />
@@ -66,7 +80,7 @@ export function WhatsAppConnect({ isConnected, onConnect, onDisconnect }: WhatsA
             {serverStatus === 'demo' ? "Simulating incoming leads..." : "Receiving real messages..."}
           </span>
         </div>
-        <button 
+        <button
           onClick={handleDisconnect}
           className="ml-2 text-[10px] text-slate-500 hover:text-red-400 underline decoration-dotted"
         >
@@ -78,7 +92,7 @@ export function WhatsAppConnect({ isConnected, onConnect, onDisconnect }: WhatsA
 
   return (
     <div className="relative group">
-      <button 
+      <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-sm",
@@ -94,17 +108,17 @@ export function WhatsAppConnect({ isConnected, onConnect, onDisconnect }: WhatsA
         <div className="absolute top-12 right-0 z-50 w-96 animate-in fade-in zoom-in-95 duration-200">
           <Card className="bg-white text-slate-900 border-slate-200 shadow-2xl overflow-hidden">
             <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                 <Smartphone className="w-4 h-4 text-slate-600" />
-                 Connect Backend
-               </h3>
-               <button onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600">
-                 <X className="w-4 h-4" />
-               </button>
+              <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <Smartphone className="w-4 h-4 text-slate-600" />
+                Connect Backend
+              </h3>
+              <button onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            
+
             <CardContent className="p-6 flex flex-col space-y-6">
-              
+
               {/* Demo Mode Option */}
               <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
                 <h4 className="text-xs font-bold text-blue-800 mb-1 flex items-center gap-2">
@@ -113,7 +127,7 @@ export function WhatsAppConnect({ isConnected, onConnect, onDisconnect }: WhatsA
                 <p className="text-[10px] text-blue-600 mb-3">
                   Simulate a connection to see how the CRM works. We'll generate fake incoming messages for you.
                 </p>
-                <button 
+                <button
                   onClick={() => checkServer('demo')}
                   className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded transition-colors"
                 >
@@ -130,18 +144,18 @@ export function WhatsAppConnect({ isConnected, onConnect, onDisconnect }: WhatsA
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <label className="text-[10px] font-bold uppercase text-slate-500">Server URL (Localhost)</label>
-                  <span className={cn("text-[10px] flex items-center gap-1", 
-                    serverStatus === 'online' ? "text-green-600" : 
-                    serverStatus === 'checking' ? "text-yellow-600" : "text-red-600")}>
+                  <span className={cn("text-[10px] flex items-center gap-1",
+                    serverStatus === 'online' ? "text-green-600" :
+                      serverStatus === 'checking' ? "text-yellow-600" : "text-red-600")}>
                     {serverStatus === 'online' ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
                     {serverStatus === 'online' ? "ONLINE" : serverStatus === 'checking' ? "CHECKING" : "OFFLINE"}
                   </span>
                 </div>
                 <div className="flex gap-2">
-                  <Input 
-                    value={serverUrl} 
+                  <Input
+                    value={serverUrl}
                     onChange={(e) => setServerUrl(e.target.value)}
-                    className="h-9 text-xs bg-slate-100 border-slate-200 text-slate-900" 
+                    className="h-9 text-xs bg-slate-100 border-slate-200 text-slate-900"
                     placeholder="http://localhost:3001"
                   />
                   <button onClick={() => checkServer(serverUrl)} className="px-3 bg-slate-200 rounded hover:bg-slate-300 text-slate-600">

@@ -1,6 +1,5 @@
-import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Calculator, Settings, Menu } from 'lucide-react';
+import { LayoutDashboard, Calculator, ShieldCheck, MessageCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -8,7 +7,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { name: 'Simulator', path: '/', icon: <Calculator className="w-5 h-5" /> },
-    { name: 'CRM (WhatsApp)', path: '/crm', icon: <LayoutDashboard className="w-5 h-5" /> },
+    { name: 'CRM (Classic)', path: '/crm', icon: <LayoutDashboard className="w-5 h-5" /> },
+    { name: 'Meta API Lab', path: '/meta-lab', icon: <ShieldCheck className="w-5 h-5" /> },
   ];
 
   return (
@@ -21,7 +21,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </h1>
           <p className="text-xs text-slate-500 mt-1">Ads & CRM Suite</p>
         </div>
-        
+
         <nav className="p-4 space-y-2">
           {navItems.map((item) => (
             <Link

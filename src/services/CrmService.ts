@@ -9,13 +9,19 @@ class CrmServiceImpl {
   private serverUrl: string = '';
   private qrCallback: ((qr: string) => void) | null = null;
   private authCallback: (() => void) | null = null;
-  private messageCallback: ((lead: Lead) => void) | null = null;
-  
+  private messageListeners: ((lead: Lead) => void)[] = [];
+  private testMessageListeners: ((data: any) => void)[] = [];
+  private healthListeners: ((health: any) => void)[] = [];
+
   // Demo Mode State
   private isDemoMode: boolean = false;
   private demoInterval: any = null;
 
   // --- SERVER CONNECTION ---
+  getServerUrl() {
+    return this.serverUrl || import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+  }
+
   async connectToServer(url: string): Promise<boolean> {
     // Handle Demo Mode
     if (url === 'demo') {
@@ -26,26 +32,47 @@ class CrmServiceImpl {
 
     this.isDemoMode = false;
     this.serverUrl = url;
-    
+
     try {
-      this.socket = io(url);
-      
+      // Disconnect existing socket if any
+      if (this.socket) {
+        this.socket.disconnect();
+        this.socket = null;
+      }
+
+      // Create new socket connection with proper options
+      this.socket = io(url, {
+        withCredentials: true,
+        transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
+        reconnection: true,
+        reconnectionAttempts: 3,
+        timeout: 5000
+      });
+
       return new Promise((resolve) => {
+        let timeoutId: number | null = null;
+
         this.socket?.on('connect', () => {
-          console.log('Connected to backend');
+          console.log('✅ Connected to backend successfully!');
+          if (timeoutId) clearTimeout(timeoutId); // Clear timeout!
           this.setupSocketListeners();
           resolve(true);
         });
 
-        this.socket?.on('connect_error', () => {
-          console.log('Connection failed');
+        this.socket?.on('connect_error', (error) => {
+          console.error('❌ Connection failed:', error.message);
+          if (timeoutId) clearTimeout(timeoutId); // Clear timeout!
           resolve(false);
         });
-        
-        // Timeout fallback
-        setTimeout(() => resolve(false), 2000);
+
+        // Timeout fallback - only triggers if no connection
+        timeoutId = setTimeout(() => {
+          console.warn('⏱️ Connection timeout');
+          resolve(false);
+        }, 5000);
       });
     } catch (e) {
+      console.error('❌ Connection error:', e);
       return false;
     }
   }
@@ -64,37 +91,37 @@ class CrmServiceImpl {
 
   private startDemoSimulation() {
     console.log("Starting Demo Simulation...");
-    
+
     // Simulate QR Code delay then Auth
     setTimeout(() => {
       if (this.qrCallback) this.qrCallback('DEMO_QR_CODE_DATA');
-      
+
       // Auto authenticate after 2 seconds
       setTimeout(() => {
         if (this.authCallback) this.authCallback();
-        
+
         // Start sending fake messages every 15-30 seconds
         this.demoInterval = setInterval(async () => {
           if (!this.isDemoMode) return;
-          
+
           const fakeLead: Omit<Lead, 'id' | 'created_at' | 'updated_at'> = {
             phone: faker.phone.number(),
             name: faker.person.fullName(),
             last_message: faker.helpers.arrayElement([
-              "Salam, qiymət?", 
-              "How much is this?", 
-              "Çatdırılma var?", 
-              "Sifariş vermək istəyirəm", 
+              "Salam, qiymət?",
+              "How much is this?",
+              "Çatdırılma var?",
+              "Sifariş vermək istəyirəm",
               "Rəngləri var?"
             ]),
             status: 'new',
             source: 'whatsapp',
             value: 0
           };
-          
+
           const savedLead = await this.addLead(fakeLead);
-          if (this.messageCallback) this.messageCallback(savedLead);
-          
+          this.messageListeners.forEach(cb => cb(savedLead));
+
         }, 15000);
 
       }, 2000);
@@ -104,7 +131,8 @@ class CrmServiceImpl {
   private setupSocketListeners() {
     if (!this.socket) return;
 
-    this.socket.on('qr', (qr) => {
+    this.socket.on('qr_code', (qr) => {
+      console.log('⚡ SOCKET: qr_code received');
       if (this.qrCallback) this.qrCallback(qr);
     });
 
@@ -112,19 +140,65 @@ class CrmServiceImpl {
       if (this.authCallback) this.authCallback();
     });
 
+    // 🧪 Test Mode Event Handler
+    this.socket.on('crm:test_incoming_message', (data: any) => {
+      console.log('📥 FRONTEND EVENT RECEIVED: crm:test_incoming_message');
+      this.testMessageListeners.forEach(cb => cb(data));
+    });
+
+    this.socket.on('crm:health_check', (health: any) => {
+      this.healthListeners.forEach(cb => cb(health));
+    });
+
+
     this.socket.on('new_message', async (data: any) => {
+      console.log('⚡ SOCKET: new_message received', data);
+
+      // 🛡️ DE-DUPLICATION CHECK
+      const existingLeads = await this.getLeads();
+
+      // Find matching lead by whatsapp_id
+      const existingIndex = existingLeads.findIndex(l => (l as any).whatsapp_id === data.whatsapp_id);
+
+      if (existingIndex !== -1) {
+        // If we already have a "fast" emit and this is the "enriched" one, update the name
+        if (!data.is_fast_emit && (existingLeads[existingIndex] as any).is_fast_emit) {
+          console.log('🔄 Updating "fast" lead with enriched data:', data.name);
+          const updatedLead = { ...existingLeads[existingIndex], name: data.name, is_fast_emit: false };
+          await this.updateLead(updatedLead.id, updatedLead);
+          this.messageListeners.forEach(cb => cb(updatedLead));
+          return;
+        }
+        console.log('⏭️ Skipping duplicate message:', data.whatsapp_id);
+        return;
+      }
+
+      // Final check for content similarity (fallback)
+      const isContentDup = existingLeads.some(l =>
+        l.phone === data.phone && l.last_message === data.message &&
+        Math.abs(new Date(l.created_at).getTime() - new Date(data.timestamp).getTime()) < 30000
+      );
+
+      if (isContentDup) {
+        console.log('⏭️ Skipping content duplicate');
+        return;
+      }
+
       // Convert incoming data to Lead format
       const newLead: Omit<Lead, 'id' | 'created_at' | 'updated_at'> = {
         phone: data.phone,
-        name: data.name,
+        name: data.name || "WhatsApp User",
         last_message: data.message,
         status: 'new',
         source: 'whatsapp',
-        value: 0
+        value: 0,
+        // @ts-ignore - tracking custom fields
+        whatsapp_id: data.whatsapp_id,
+        is_fast_emit: data.is_fast_emit
       };
-      
+
       const savedLead = await this.addLead(newLead);
-      if (this.messageCallback) this.messageCallback(savedLead);
+      this.messageListeners.forEach(cb => cb(savedLead));
     });
   }
 
@@ -138,14 +212,36 @@ class CrmServiceImpl {
   }
 
   onNewMessage(cb: (lead: Lead) => void) {
-    this.messageCallback = cb;
+    this.messageListeners.push(cb);
   }
+
+  onTestMessage(cb: (data: any) => void) {
+    this.testMessageListeners.push(cb);
+  }
+
+  onHealthCheck(cb: (health: any) => void) {
+    this.healthListeners.push(cb);
+  }
+
+  async fetchRecentMessages(limit: number = 30): Promise<any[]> {
+    if (!this.serverUrl) return [];
+    try {
+      const response = await fetch(`${this.serverUrl}/chats/recent?limit=${limit}`);
+      const data = await response.json();
+      return data.messages || [];
+    } catch (e) {
+      console.error('❌ Error fetching recent messages:', e);
+      return [];
+    }
+  }
+
+
 
   // --- DATA METHODS ---
   async getLeads(dateRange?: DateRange): Promise<Lead[]> {
     const raw = localStorage.getItem(STORAGE_KEY);
     let leads: Lead[] = raw ? JSON.parse(raw) : [];
-    
+
     if (dateRange?.start) {
       // Start of day
       const startDate = new Date(dateRange.start);
@@ -158,21 +254,47 @@ class CrmServiceImpl {
       endDate.setHours(23, 59, 59, 999);
       leads = leads.filter(l => new Date(l.created_at) <= endDate);
     }
-    
+
     return leads.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
   async addLead(lead: Omit<Lead, 'id' | 'created_at' | 'updated_at'>): Promise<Lead> {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const allLeads: Lead[] = raw ? JSON.parse(raw) : [];
+
+    // 1️⃣ UPSERT CHECK: Does this phone number already exist?
+    // Normalized check: remove spaces, dashes? For now, strict match since WhatsApp returns clean numbers.
+    const existingIndex = allLeads.findIndex(l => l.phone === lead.phone);
+
+    if (existingIndex !== -1) {
+      console.log(`♻️ Upserting existing lead: ${lead.phone}`);
+      const existingLead = allLeads[existingIndex];
+
+      // Update fields with new message info
+      existingLead.last_message = lead.last_message;
+      existingLead.updated_at = new Date().toISOString();
+
+      // Update name/source info if provided
+      if (lead.name) existingLead.name = lead.name;
+      if (lead.source_contact_name) existingLead.source_contact_name = lead.source_contact_name;
+      if (lead.source_message) existingLead.source_message = lead.source_message;
+      if (lead.whatsapp_id) existingLead.whatsapp_id = lead.whatsapp_id;
+
+      // Bring to top of list (Recent Activity)
+      allLeads.splice(existingIndex, 1);
+      const updatedList = [existingLead, ...allLeads];
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+      return existingLead;
+    }
+
+    // 2️⃣ NEW LEAD CREATION
     const newLead: Lead = {
       ...lead,
       id: crypto.randomUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-
-    const leads = await this.getLeads(); // Get all leads ignoring filter for storage
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const allLeads: Lead[] = raw ? JSON.parse(raw) : [];
 
     const updated = [newLead, ...allLeads];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
@@ -182,8 +304,8 @@ class CrmServiceImpl {
   async updateLead(id: string, updates: Partial<Lead>): Promise<void> {
     const raw = localStorage.getItem(STORAGE_KEY);
     const allLeads: Lead[] = raw ? JSON.parse(raw) : [];
-    
-    const updated = allLeads.map(l => 
+
+    const updated = allLeads.map(l =>
       l.id === id ? { ...l, ...updates, updated_at: new Date().toISOString() } : l
     );
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
@@ -196,7 +318,7 @@ class CrmServiceImpl {
   async deleteLead(id: string): Promise<void> {
     const raw = localStorage.getItem(STORAGE_KEY);
     const allLeads: Lead[] = raw ? JSON.parse(raw) : [];
-    
+
     const updated = allLeads.filter(l => l.id !== id);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   }

@@ -11,6 +11,11 @@ export interface Lead {
   created_at: string; // ISO Date String
   updated_at: string;
   source: 'whatsapp' | 'manual';
+  // WhatsApp Metadata
+  whatsapp_id?: string;
+  source_contact_name?: string;
+  source_message?: string;
+  is_fast_emit?: boolean; // For tracking initial vs enriched updates
 }
 
 export interface DateRange {

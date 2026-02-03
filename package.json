@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "start": "node server/index.js",
     "lint": "eslint .",
     "lint:dualite": "eslint --config eslint.dualite.config.js .",
     "tsc:dualite": "yarn tsc -p tsconfig.dualite.json",
@@ -17,13 +18,20 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "axios": "^1.9.0",
     "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "date-fns": "^4.1.0",
+    "express": "^5.2.1",
     "lucide-react": "^0.511.0",
+    "puppeteer": "^24.36.1",
+    "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-qr-code": "^2.0.18",
     "react-router-dom": "^7.13.0",
+    "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "whatsapp-web.js": "^1.34.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.27.0",
