@@ -1,9 +1,11 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const cors = require('cors');
 const qrcode = require('qrcode');
+const db = require('./database');
 
 const app = express();
 const server = http.createServer(app);
@@ -36,6 +38,16 @@ let qrCodeData = null;
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('🚀 CRM BACKEND INITIALIZING...');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+// Initialize Database
+if (process.env.DATABASE_URL) {
+  db.initDb().catch(err => {
+    console.error('⚠️ Database initialization failed:', err);
+    console.log('ℹ️  Continuing without database (localStorage fallback)');
+  });
+} else {
+  console.log('ℹ️  No DATABASE_URL found, using localStorage fallback');
+}
 
 // Initialize WhatsApp Client (Standard Config)
 const client = new Client({
@@ -126,7 +138,7 @@ client.on('disconnected', (reason) => {
   // Optional: Auto-reinitialize logic could go here
 });
 
-// 📨 UNIFIED MESSAGE PROCESSOR (Incoming & Outgoing)
+// 📨 UNIFIED MESSAGE PROCESSOR (Incoming & Outgoing) + DATABASE INTEGRATION
 async function processMessage(msg, type) {
   try {
     // Basic Filter: Ignore Status Updates
@@ -165,6 +177,32 @@ async function processMessage(msg, type) {
         is_fast_emit: false
       };
       io.emit('new_message', enrichedPayload);
+
+      // 3. DATABASE PERSISTENCE (Only if DATABASE_URL exists)
+      if (process.env.DATABASE_URL && db) {
+        try {
+          const existingLead = await db.findLeadByPhone(rawNumber);
+
+          if (existingLead) {
+            // SMART UPDATE: Only update message and timestamp, preserve status
+            await db.updateLeadMessage(rawNumber, msg.body, msg.id._serialized);
+            console.log(`📝 Updated lead: ${rawNumber}`);
+          } else {
+            // CREATE NEW LEAD
+            await db.createLead({
+              phone: rawNumber,
+              name: enrichedPayload.name,
+              last_message: msg.body,
+              whatsapp_id: msg.id._serialized,
+              source: 'whatsapp',
+              status: 'new'
+            });
+            console.log(`✨ New lead created: ${rawNumber}`);
+          }
+        } catch (dbError) {
+          console.error('⚠️ Database error (non-fatal):', dbError.message);
+        }
+      }
     } catch (err) {
       // Ignore errors
     }
@@ -226,6 +264,93 @@ function getHealthStatus() {
 // ═══════════════════════════════════════════════════════════════
 // 🛠️ API ENDPOINTS
 // ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+// 🛠️ API ENDPOINTS
+// ═══════════════════════════════════════════════════════════════
+
+// 🗄️ LEADS API ENDPOINTS
+
+// GET /api/leads - Get all leads with optional filters
+app.get('/api/leads', async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database not configured' });
+  }
+
+  try {
+    const { status, startDate, endDate, limit } = req.query;
+    const leads = await db.getLeads({ status, startDate, endDate, limit: limit ? parseInt(limit) : undefined });
+    res.json(leads);
+  } catch (error) {
+    console.error('❌ Error fetching leads:', error);
+    res.status(500).json({ error: 'Failed to fetch leads' });
+  }
+});
+
+// POST /api/leads - Create a new lead
+app.post('/api/leads', async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database not configured' });
+  }
+
+  try {
+    const lead = await db.createLead(req.body);
+    res.json(lead);
+  } catch (error) {
+    console.error('❌ Error creating lead:', error);
+    res.status(500).json({ error: 'Failed to create lead' });
+  }
+});
+
+// PUT /api/leads/:id/status - Update lead status
+app.put('/api/leads/:id/status', async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database not configured' });
+  }
+
+  try {
+    const { status } = req.body;
+    const lead = await db.updateLeadStatus(req.params.id, status);
+
+    // Emit socket event for real-time update
+    io.emit('lead_updated', lead);
+
+    res.json(lead);
+  } catch (error) {
+    console.error('❌ Error updating lead status:', error);
+    res.status(500).json({ error: 'Failed to update lead status' });
+  }
+});
+
+// DELETE /api/leads/:id - Delete a lead
+app.delete('/api/leads/:id', async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database not configured' });
+  }
+
+  try {
+    const lead = await db.deleteLead(req.params.id);
+    res.json(lead);
+  } catch (error) {
+    console.error('❌ Error deleting lead:', error);
+    res.status(500).json({ error: 'Failed to delete lead' });
+  }
+});
+
+// GET /api/stats - Get lead statistics
+app.get('/api/stats', async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database not configured' });
+  }
+
+  try {
+    const stats = await db.getLeadStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('❌ Error fetching stats:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
 
 // 🧪 CRITICAL TEST ROUTE (Requested by User)
 app.get('/__test_emit', (req, res) => {
