@@ -335,8 +335,8 @@ const DIST_PATH = path.join(__dirname, '../dist');
 // Serve static files
 app.use(express.static(DIST_PATH));
 
-// Handle React Routing (SPA Fallback)
-app.get('*', (req, res) => {
+// Handle React Routing (SPA Fallback) - Express 5 Compatible
+app.use((req, res, next) => {
   const file = req.path.split('/').pop();
   if (file && file.includes('.')) {
     // If it has an extension but wasn't found in static, 404
