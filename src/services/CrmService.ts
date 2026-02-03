@@ -260,19 +260,37 @@ class CrmServiceImpl {
 
 
 
-  // --- DATA METHODS ---
+  // --- DATA METHODS (DATABASE API) ---
   async getLeads(dateRange?: DateRange): Promise<Lead[]> {
+    // Try database API first
+    if (this.serverUrl) {
+      try {
+        const params = new URLSearchParams();
+        if (dateRange?.start) params.append('startDate', dateRange.start.toISOString());
+        if (dateRange?.end) params.append('endDate', dateRange.end.toISOString());
+
+        const response = await fetch(`${this.serverUrl}/api/leads?${params}`);
+        if (response.ok) {
+          const leads = await response.json();
+          // Cache in localStorage for offline access
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(leads));
+          return leads;
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to fetch from database, using localStorage fallback:', error);
+      }
+    }
+
+    // Fallback to localStorage (offline mode or API unavailable)
     const raw = localStorage.getItem(STORAGE_KEY);
     let leads: Lead[] = raw ? JSON.parse(raw) : [];
 
     if (dateRange?.start) {
-      // Start of day
       const startDate = new Date(dateRange.start);
       startDate.setHours(0, 0, 0, 0);
       leads = leads.filter(l => new Date(l.created_at) >= startDate);
     }
     if (dateRange?.end) {
-      // End of day
       const endDate = new Date(dateRange.end);
       endDate.setHours(23, 59, 59, 999);
       leads = leads.filter(l => new Date(l.created_at) <= endDate);
@@ -282,52 +300,84 @@ class CrmServiceImpl {
   }
 
   async addLead(lead: Omit<Lead, 'id' | 'created_at' | 'updated_at'>): Promise<Lead> {
+    // Try database API first
+    if (this.serverUrl) {
+      try {
+        const response = await fetch(`${this.serverUrl}/api/leads`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(lead)
+        });
+
+        if (response.ok) {
+          const savedLead = await response.json();
+          console.log('✅ Lead saved to database:', savedLead.phone);
+
+          // Update localStorage cache
+          const raw = localStorage.getItem(STORAGE_KEY);
+          const allLeads: Lead[] = raw ? JSON.parse(raw) : [];
+          const updated = [savedLead, ...allLeads.filter(l => l.phone !== savedLead.phone)];
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+
+          return savedLead;
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to save to database, using localStorage:', error);
+      }
+    }
+
+    // Fallback: localStorage only (offline mode)
     const raw = localStorage.getItem(STORAGE_KEY);
     const allLeads: Lead[] = raw ? JSON.parse(raw) : [];
-
-    // 1️⃣ UPSERT CHECK: Does this phone number already exist?
-    // Normalized check: remove spaces, dashes? For now, strict match since WhatsApp returns clean numbers.
     const existingIndex = allLeads.findIndex(l => l.phone === lead.phone);
 
     if (existingIndex !== -1) {
-      console.log(`♻️ Upserting existing lead: ${lead.phone}`);
+      console.log(`♻️ Upserting existing lead (localStorage): ${lead.phone}`);
       const existingLead = allLeads[existingIndex];
-
-      // Update fields with new message info
       existingLead.last_message = lead.last_message;
       existingLead.updated_at = new Date().toISOString();
-
-      // Update name/source info if provided
       if (lead.name) existingLead.name = lead.name;
       if (lead.source_contact_name) existingLead.source_contact_name = lead.source_contact_name;
       if (lead.source_message) existingLead.source_message = lead.source_message;
       if (lead.whatsapp_id) existingLead.whatsapp_id = lead.whatsapp_id;
-
-      // Bring to top of list (Recent Activity)
       allLeads.splice(existingIndex, 1);
       const updatedList = [existingLead, ...allLeads];
-
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
       return existingLead;
     }
 
-    // 2️⃣ NEW LEAD CREATION
     const newLead: Lead = {
       ...lead,
       id: crypto.randomUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-
     const updated = [newLead, ...allLeads];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     return newLead;
   }
 
   async updateLead(id: string, updates: Partial<Lead>): Promise<void> {
+    // Update database if available
+    if (this.serverUrl && updates.status) {
+      try {
+        const response = await fetch(`${this.serverUrl}/api/leads/${id}/status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: updates.status })
+        });
+
+        if (response.ok) {
+          console.log('✅ Lead status updated in database');
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to update database:', error);
+      }
+    }
+
+    // Always update localStorage cache
     const raw = localStorage.getItem(STORAGE_KEY);
     const allLeads: Lead[] = raw ? JSON.parse(raw) : [];
-
     const updated = allLeads.map(l =>
       l.id === id ? { ...l, ...updates, updated_at: new Date().toISOString() } : l
     );
