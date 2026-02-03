@@ -14,7 +14,7 @@ interface WhatsAppConnectProps {
 
 export function WhatsAppConnect({ isConnected, onConnect, onDisconnect }: WhatsAppConnectProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [serverUrl, setServerUrl] = useState('http://localhost:4000');
+  const [serverUrl, setServerUrl] = useState(import.meta.env.PROD ? window.location.origin : 'http://localhost:4000');
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline' | 'demo'>('offline');
   const [qrCode, setQrCode] = useState<string>('');
 

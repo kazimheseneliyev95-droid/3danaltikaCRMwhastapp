@@ -35,4 +35,5 @@ RUN npm run build
 EXPOSE 4000
 
 # Start command (Monolith: served via node)
-CMD ["npm", "start"]
+# Start command (Explicit)
+CMD ["node", "server/index.cjs"]
