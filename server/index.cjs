@@ -41,7 +41,8 @@ console.log('━━━━━━━━━━━━━━━━━━━━━━�
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './wwebjs_auth' }),
   puppeteer: {
-    headless: false, // 🔴 VISIBLE BROWSER FOR DEBUGGING
+    headless: true, // ⚠️ HEADLESS MUST BE TRUE FOR PRODUCTION (RAILWAY)
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined, // 🟢 Use Docker Chrome if available
     defaultViewport: null, // 🖥️ Full browser window (human-like)
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     args: [
