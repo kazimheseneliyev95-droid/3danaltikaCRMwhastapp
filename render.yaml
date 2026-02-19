@@ -1,21 +1,14 @@
 services:
-  # 1. The Backend (Node.js + WhatsApp)
   - type: web
-    name: whatsapp-crm-backend
+    name: whatsapp-crm
     env: docker
-    dockerContext: ./server
-    dockerfilePath: ./server/Dockerfile
+    dockerfilePath: ./Dockerfile
     plan: free
     autoDeploy: true
     envVars:
       - key: PORT
-        value: 10000
-
-  # 2. The Frontend (React + Vite)
-  - type: web
-    name: whatsapp-crm-frontend
-    env: static
-    buildCommand: yarn install && yarn build
-    staticPublishPath: ./dist
-    plan: free
-    autoDeploy: true
+        value: 4000
+      - key: DATABASE_URL
+        value: postgresql://postgres.ntrmqtbyfvfyixomwphp:Kazimks123!@aws-1-us-east-1.pooler.supabase.com:5432/postgres
+      - key: NODE_ENV
+        value: production

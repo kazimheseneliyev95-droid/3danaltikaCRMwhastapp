@@ -5,7 +5,7 @@ const { Server } = require('socket.io');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const cors = require('cors');
 const qrcode = require('qrcode');
-const db = require('./database');
+// const db = require('./database'); // Moved to line 65 for cleanup
 
 const app = express();
 const server = http.createServer(app);
@@ -13,49 +13,78 @@ const server = http.createServer(app);
 // Environment & Config
 const PORT = process.env.PORT || 4000;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Middleware
 app.use(cors({
-  origin: [FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000'],
-  methods: ['GET', 'POST'],
+  origin: [FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3000', '*'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // Socket.IO Setup
 const io = new Server(server, {
   cors: {
-    origin: '*', // Allow all for local dev stability
-    methods: ["GET", "POST"]
-  }
+    origin: '*',
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 // State Variables
 let isReady = false;
 let isAuthenticated = false;
 let qrCodeData = null;
+let isInitializing = false;
+
+// 🆕 Message Deduplication Cache
+const PROCESSED_MESSAGES_TTL = 30000; // 30 seconds
+const processedMessages = new Map(); // messageId -> timestamp
+
+// Clean up old processed messages periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, timestamp] of processedMessages.entries()) {
+    if (now - timestamp > PROCESSED_MESSAGES_TTL) {
+      processedMessages.delete(id);
+    }
+  }
+}, 60000); // Clean every 60 seconds
 
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('🚀 CRM BACKEND INITIALIZING...');
+console.log(`📋 Environment: ${NODE_ENV}`);
+console.log(`📋 Port: ${PORT}`);
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
 // Initialize Database
-if (process.env.DATABASE_URL) {
-  db.initDb().catch(err => {
-    console.error('⚠️ Database initialization failed:', err);
-    console.log('ℹ️  Continuing without database (localStorage fallback)');
-  });
-} else {
-  console.log('ℹ️  No DATABASE_URL found, using localStorage fallback');
+// Initialize Database
+let db = require('./database'); // Default PG
+if (!process.env.DATABASE_URL) {
+  console.log('ℹ️  No DATABASE_URL found, switching to FILE-BASED STORAGE (leads.json)');
+  db = require('./simple_db');
 }
 
-// Initialize WhatsApp Client (Standard Config)
+db.initDb()
+  .then(() => console.log('✅ Storage initialized successfully'))
+  .catch(err => {
+    console.error('⚠️ Storage initialization failed:', err.message);
+  });
+
+
+// Initialize WhatsApp Client (Improved Config)
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: './wwebjs_auth' }),
+  authStrategy: new LocalAuth({
+    dataPath: './wwebjs_auth',
+    clientId: 'crm-' + (process.env.INSTANCE_ID || 'default')
+  }),
   puppeteer: {
-    headless: true, // ⚠️ HEADLESS MUST BE TRUE FOR PRODUCTION (RAILWAY)
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined, // 🟢 Use Docker Chrome if available
-    defaultViewport: null, // 🖥️ Full browser window (human-like)
+    headless: NODE_ENV === 'production', // Only headless in production
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    defaultViewport: null,
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     args: [
       '--no-sandbox',
@@ -65,13 +94,63 @@ const client = new Client({
       '--no-first-run',
       '--no-zygote',
       '--disable-gpu',
-      '--start-maximized' // 🟢 Opens maximized (human-like)
+      '--disable-software-rasterizer',
+      '--disable-extensions',
+      '--disable-default-apps'
     ]
   }
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 📡 STANDARD EVENT LISTENERS (Reliable)
+// 🛡️ IMPROVED ERROR HANDLERS
+// ═══════════════════════════════════════════════════════════════
+
+process.on('uncaughtException', (err) => {
+  console.error('🔥 UNCAUGHT EXCEPTION:', err.message);
+  console.error('Stack:', err.stack);
+  // Keep running but log critical errors
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔥 UNHANDLED REJECTION:', reason);
+  console.error('Promise:', promise);
+});
+
+// Graceful shutdown
+async function gracefulShutdown(signal) {
+  console.log(`\n🛑 Received ${signal}, starting graceful shutdown...`);
+
+  try {
+    // Stop accepting new connections
+    server.close(() => {
+      console.log('✅ HTTP server closed');
+    });
+
+    // Disconnect WhatsApp client
+    if (client) {
+      await client.destroy();
+      console.log('✅ WhatsApp client disconnected');
+    }
+
+    // Close database connections
+    if (db.closePool) {
+      await db.closePool();
+      console.log('✅ Database connections closed');
+    }
+
+    console.log('✅ Graceful shutdown completed');
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Error during shutdown:', error);
+    process.exit(1);
+  }
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// ═══════════════════════════════════════════════════════════════
+// 📡 STANDARD EVENT LISTENERS (Improved)
 // ═══════════════════════════════════════════════════════════════
 
 client.on('loading_screen', (percent, message) => {
@@ -80,9 +159,12 @@ client.on('loading_screen', (percent, message) => {
 
 client.on('change_state', (state) => {
   console.log(`🔄 STATE CHANGED: ${state}`);
+  if (state === 'CONFLICT') {
+    console.warn('⚠️ WhatsApp session conflict detected!');
+  }
 });
 
-client.on('qr', (qr) => {
+client.on('qr', async (qr) => {
   console.log('📱 QR RECEIVED');
   qrCodeData = qr;
   isReady = false;
@@ -95,38 +177,29 @@ client.on('ready', () => {
   isReady = true;
   isAuthenticated = true;
   qrCodeData = null;
+  isInitializing = false;
+
   io.emit('ready', { status: 'connected' });
   io.emit('crm:health_check', getHealthStatus());
-});
 
-// 🛡️ GLOBAL ERROR HANDLERS to prevent crash
-process.on('uncaughtException', (err) => {
-  console.error('🔥 UNCAUGHT EXCEPTION:', err);
-  // Keep running if possible
-});
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('🔥 UNHANDLED REJECTION:', reason);
+  console.log(`📊 Connected clients: ${io.engine.clientsCount}`);
 });
 
 client.on('authenticated', () => {
   console.log('🔑 CLIENT AUTHENTICATED');
   isAuthenticated = true;
+  isInitializing = false;
+
   io.emit('authenticated', { status: 'authenticated' });
 
-  // 🛡️ FORCE READY WATCHDOG (Relaxed to 15s)
-  setTimeout(() => {
-    if (!isReady) {
-      console.log('⚠️ [WATCHDOG] Force-switching to READY state (Event missing)');
-      isReady = true;
-      io.emit('ready', { status: 'connected' });
-      io.emit('crm:health_check', getHealthStatus());
-    }
-  }, 15000);
+  // 🆕 REMOVED: Watchdog timer - it was masking real connection issues
+  // If 'ready' event doesn't fire, we should let users know there's a problem
 });
 
 client.on('auth_failure', (msg) => {
   console.error('🚫 AUTH FAILURE:', msg);
   isAuthenticated = false;
+  isInitializing = false;
   io.emit('auth_failure', msg);
 });
 
@@ -134,31 +207,79 @@ client.on('disconnected', (reason) => {
   console.warn('⚠️ CLIENT DISCONNECTED:', reason);
   isReady = false;
   isAuthenticated = false;
+  qrCodeData = null;
   io.emit('disconnected', reason);
-  // Optional: Auto-reinitialize logic could go here
+
+  // 🔄 Auto-Reconnect Strategy
+  console.log('🔄 Attempting to reconnect in 5 seconds...');
+  setTimeout(() => {
+    if (!isInitializing) {
+      isInitializing = true;
+      client.initialize().catch(err => {
+        console.error('❌ Reconnection failed:', err.message);
+        isInitializing = false;
+      });
+    }
+  }, 5000);
 });
 
-// 📨 UNIFIED MESSAGE PROCESSOR (Incoming & Outgoing) + DATABASE INTEGRATION
+client.on('session_invalid', () => {
+  console.error('🚫 SESSION INVALID - Need to re-authenticate');
+  isReady = false;
+  isAuthenticated = false;
+  io.emit('auth_failure', 'Session invalid, please re-scan QR code');
+
+  // 🔄 Destroy and Re-initialize to allow fresh scan
+  client.destroy().then(() => {
+    console.log('🔄 Client destroyed, re-initializing for new scan...');
+    client.initialize();
+  }).catch(err => console.error('❌ Error destroying client:', err));
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 📨 IMPROVED MESSAGE PROCESSOR (With De-duplication)
+// ═══════════════════════════════════════════════════════════════
+
 async function processMessage(msg, type) {
   try {
     // Basic Filter: Ignore Status Updates
     if (msg.from === 'status@broadcast') return;
+    if (!msg.body || msg.body.trim() === '') return;
+
+    // 🆕 Duplicate Detection by WhatsApp Message ID
+    const whatsappId = msg.id?._serialized || msg.id;
+    if (!whatsappId) {
+      console.warn('⚠️ Message missing ID, skipping');
+      return;
+    }
+
+    // Check if already processed
+    if (processedMessages.has(whatsappId)) {
+      console.log(`⏭️ Skipping duplicate message: ${whatsappId}`);
+      return;
+    }
+
+    // Mark as processed
+    processedMessages.set(whatsappId, Date.now());
 
     // Logging
     const prefix = msg.fromMe ? '📤 [OUTGOING]' : '📥 [INCOMING]';
-    console.log(`${prefix} ${msg.from} -> ${msg.to} | ${msg.body.substring(0, 30)}...`);
-
-    // 1. FAST EMIT (Instant)
     const rawNumber = msg.fromMe ? msg.to.split('@')[0] : msg.from.split('@')[0];
 
     // Safety check
-    if (!rawNumber || rawNumber.length < 5) return;
+    if (!rawNumber || rawNumber.length < 5) {
+      console.warn('⚠️ Invalid phone number, skipping:', rawNumber);
+      return;
+    }
 
+    console.log(`${prefix} ${rawNumber} | ${msg.body.substring(0, 50)}...`);
+
+    // 1. FAST EMIT (Instant with minimal data)
     const fastPayload = {
       phone: rawNumber,
       name: `~${rawNumber}`,
       message: msg.body,
-      whatsapp_id: msg.id._serialized,
+      whatsapp_id: whatsappId,
       fromMe: msg.fromMe,
       timestamp: new Date().toISOString(),
       is_fast_emit: true
@@ -166,34 +287,52 @@ async function processMessage(msg, type) {
 
     io.emit('new_message', fastPayload);
 
-    // 2. ENRICHED EMIT (Background Name Resolution)
+    // 2. ENRICHED EMIT (Background Name Resolution with better error handling)
     try {
-      // Mock contact fetch if manual injection (no getContact function)
-      const contact = msg.getContact ? await msg.getContact() : { name: 'Self-Test' };
+      let contactName = `+${rawNumber}`;
+
+      try {
+        if (typeof msg.getContact === 'function') {
+          const contact = await msg.getContact();
+          contactName = contact.pushname || contact.name || contactName;
+        }
+      } catch (contactError) {
+        console.warn('⚠️ Could not fetch contact name:', contactError.message);
+      }
 
       const enrichedPayload = {
         ...fastPayload,
-        name: contact.pushname || contact.name || `+${rawNumber}`,
+        name: contactName,
         is_fast_emit: false
       };
-      io.emit('new_message', enrichedPayload);
+
+      // Only emit enriched if name changed
+      if (enrichedPayload.name !== fastPayload.name) {
+        io.emit('new_message', enrichedPayload);
+      }
 
       // 3. DATABASE PERSISTENCE (Only if DATABASE_URL exists)
       if (process.env.DATABASE_URL && db) {
         try {
-          const existingLead = await db.findLeadByPhone(rawNumber);
+          // First try to find by WhatsApp ID (more accurate)
+          let existingLead = await db.findLeadByWhatsAppId(whatsappId);
+
+          // If not found by WhatsApp ID, try by phone
+          if (!existingLead) {
+            existingLead = await db.findLeadByPhone(rawNumber);
+          }
 
           if (existingLead) {
-            // SMART UPDATE: Only update message and timestamp, preserve status
-            await db.updateLeadMessage(rawNumber, msg.body, msg.id._serialized);
-            console.log(`📝 Updated lead: ${rawNumber}`);
+            // SMART UPDATE: Update message, name, and timestamp, preserve status
+            await db.updateLeadMessage(rawNumber, msg.body, whatsappId, contactName);
+            console.log(`📝 Updated lead: ${rawNumber} (${existingLead.status})`);
           } else {
-            // CREATE NEW LEAD
+            // CREATE NEW LEAD with better data
             await db.createLead({
               phone: rawNumber,
-              name: enrichedPayload.name,
+              name: contactName,
               last_message: msg.body,
-              whatsapp_id: msg.id._serialized,
+              whatsapp_id: whatsappId,
               source: 'whatsapp',
               status: 'new'
             });
@@ -201,18 +340,19 @@ async function processMessage(msg, type) {
           }
         } catch (dbError) {
           console.error('⚠️ Database error (non-fatal):', dbError.message);
+          // Don't throw - allow system to continue
         }
       }
     } catch (err) {
-      // Ignore errors
+      console.error('❌ Error in enriched emit:', err.message);
     }
 
   } catch (error) {
-    console.error('❌ Error processing message:', error);
+    console.error('❌ Error processing message:', error.message);
   }
 }
 
-// Handler for INCOMING messages (Standard)
+// Handler for INCOMING messages
 client.on('message', async (msg) => {
   processMessage(msg, 'INCOMING');
 });
@@ -224,13 +364,12 @@ client.on('message_create', async (msg) => {
   }
 });
 
-
 // ═══════════════════════════════════════════════════════════════
-// 🔌 SOCKET.IO CONNECTION
+// 🔌 SOCKET.IO CONNECTION (Improved Cleanup)
 // ═══════════════════════════════════════════════════════════════
 
 io.on('connection', (socket) => {
-  console.log('👤 NEW UI CLIENT CONNECTED:', socket.id);
+  console.log(`👤 NEW UI CLIENT CONNECTED: ${socket.id} (Total: ${io.engine.clientsCount})`);
 
   // Send immediate state
   socket.emit('crm:health_check', getHealthStatus());
@@ -240,19 +379,25 @@ io.on('connection', (socket) => {
     socket.emit('qr_code', qrCodeData);
   }
 
-  // 🚀 FIX: If already authenticated, tell the new client immediately!
+  // If already authenticated, tell the new client immediately
   if (isAuthenticated) {
     socket.emit('authenticated', { status: 'authenticated' });
   }
   if (isReady) {
     socket.emit('ready', { status: 'connected' });
   }
+
+  // Handle disconnect
+  socket.on('disconnect', (reason) => {
+    console.log(`👤 UI CLIENT DISCONNECTED: ${socket.id} (${reason})`);
+  });
 });
 
 function getHealthStatus() {
   let status = 'OFFLINE';
   if (isReady) status = 'CONNECTED';
   else if (isAuthenticated) status = 'SYNCING';
+  else if (isInitializing) status = 'INITIALIZING';
 
   return {
     whatsapp: status,
@@ -262,48 +407,52 @@ function getHealthStatus() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 🛠️ API ENDPOINTS
+// 🛠️ API ENDPOINTS (Improved Error Handling)
 // ═══════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════
-// 🛠️ API ENDPOINTS
-// ═══════════════════════════════════════════════════════════════
+// Async handler wrapper for better error handling
+const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
 
 // 🗄️ LEADS API ENDPOINTS
 
-// GET /api/leads - Get all leads with optional filters
-app.get('/api/leads', async (req, res) => {
+app.get('/api/leads', asyncHandler(async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Database not configured' });
   }
 
   try {
-    const { status, startDate, endDate, limit } = req.query;
-    const leads = await db.getLeads({ status, startDate, endDate, limit: limit ? parseInt(limit) : undefined });
+    const { status, startDate, endDate, limit, offset } = req.query;
+    const leads = await db.getLeads({
+      status,
+      startDate,
+      endDate,
+      limit: limit ? parseInt(limit) : undefined,
+      offset: offset ? parseInt(offset) : undefined
+    });
     res.json(leads);
   } catch (error) {
-    console.error('❌ Error fetching leads:', error);
-    res.status(500).json({ error: 'Failed to fetch leads' });
+    console.error('❌ Error fetching leads:', error.message);
+    res.status(500).json({ error: 'Failed to fetch leads', details: error.message });
   }
-});
+}));
 
-// POST /api/leads - Create a new lead
-app.post('/api/leads', async (req, res) => {
+app.post('/api/leads', asyncHandler(async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Database not configured' });
   }
 
   try {
     const lead = await db.createLead(req.body);
-    res.json(lead);
+    res.status(201).json(lead);
   } catch (error) {
-    console.error('❌ Error creating lead:', error);
-    res.status(500).json({ error: 'Failed to create lead' });
+    console.error('❌ Error creating lead:', error.message);
+    res.status(500).json({ error: 'Failed to create lead', details: error.message });
   }
-});
+}));
 
-// PUT /api/leads/:id/status - Update lead status
-app.put('/api/leads/:id/status', async (req, res) => {
+app.put('/api/leads/:id/status', asyncHandler(async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Database not configured' });
   }
@@ -312,33 +461,40 @@ app.put('/api/leads/:id/status', async (req, res) => {
     const { status } = req.body;
     const lead = await db.updateLeadStatus(req.params.id, status);
 
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
     // Emit socket event for real-time update
     io.emit('lead_updated', lead);
 
     res.json(lead);
   } catch (error) {
-    console.error('❌ Error updating lead status:', error);
-    res.status(500).json({ error: 'Failed to update lead status' });
+    console.error('❌ Error updating lead status:', error.message);
+    res.status(500).json({ error: 'Failed to update lead status', details: error.message });
   }
-});
+}));
 
-// DELETE /api/leads/:id - Delete a lead
-app.delete('/api/leads/:id', async (req, res) => {
+app.delete('/api/leads/:id', asyncHandler(async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Database not configured' });
   }
 
   try {
     const lead = await db.deleteLead(req.params.id);
+
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
     res.json(lead);
   } catch (error) {
-    console.error('❌ Error deleting lead:', error);
-    res.status(500).json({ error: 'Failed to delete lead' });
+    console.error('❌ Error deleting lead:', error.message);
+    res.status(500).json({ error: 'Failed to delete lead', details: error.message });
   }
-});
+}));
 
-// GET /api/stats - Get lead statistics
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', asyncHandler(async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Database not configured' });
   }
@@ -347,12 +503,13 @@ app.get('/api/stats', async (req, res) => {
     const stats = await db.getLeadStats();
     res.json(stats);
   } catch (error) {
-    console.error('❌ Error fetching stats:', error);
-    res.status(500).json({ error: 'Failed to fetch stats' });
+    console.error('❌ Error fetching stats:', error.message);
+    res.status(500).json({ error: 'Failed to fetch stats', details: error.message });
   }
-});
+}));
 
-// 🧪 CRITICAL TEST ROUTE (Requested by User)
+// 🧪 TEST ROUTES
+
 app.get('/__test_emit', (req, res) => {
   console.log('🧪 TEST: Manually emitting socket event...');
 
@@ -371,19 +528,36 @@ app.get('/__test_emit', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json(getHealthStatus());
+  const health = getHealthStatus();
+
+  // Add database health
+  if (process.env.DATABASE_URL && db.healthCheck) {
+    db.healthCheck()
+      .then(dbHealth => {
+        res.json({ ...health, database: dbHealth });
+      })
+      .catch(() => {
+        res.json({ ...health, database: { status: 'error' } });
+      });
+  } else {
+    res.json(health);
+  }
 });
 
-app.get('/chats/recent', async (req, res) => {
+app.get('/chats/recent', asyncHandler(async (req, res) => {
   console.log('📂 RECENT CHATS REQUESTED');
+
   if (!isReady) {
     console.warn('⚠️ Request rejected: Client not ready');
     return res.status(503).json({ error: 'WhatsApp client not ready yet' });
   }
+
   try {
     console.log('⏳ Fetching chats from WhatsApp Client...');
     const chatsPromise = client.getChats();
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout getting chats')), 10000));
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout getting chats')), 10000)
+    );
 
     const chats = await Promise.race([chatsPromise, timeoutPromise]);
     console.log(`✅ RAW CHATS FOUND: ${chats.length}`);
@@ -399,19 +573,22 @@ app.get('/chats/recent', async (req, res) => {
     console.log(`📤 RETURNING ${recent.length} CHATS to Frontend`);
     res.json(recent);
   } catch (e) {
-    console.error('⚠️ Error fetching chats:', e);
+    console.error('⚠️ Error fetching chats:', e.message);
     res.json([]);
   }
-});
+}));
 
-// 🧪 CRITICAL WHATSAPP SEND TEST
-app.get('/__test_send_whatsapp', async (req, res) => {
+// 🧪 WHATSAPP SEND TEST
+
+app.get('/__test_send_whatsapp', asyncHandler(async (req, res) => {
   let phone = req.query.phone;
-  if (!phone) return res.send('Please provide ?phone=994XXXXXXXX');
+  if (!phone) {
+    return res.status(400).send('Please provide ?phone=994XXXXXXXX');
+  }
 
   // Auto-fix common prefix issues for Azerbaijan
-  if (phone.length === 9) phone = '994' + phone; // 556060900 -> 994556060900
-  if (phone.startsWith('0')) phone = '994' + phone.substring(1); // 055... -> 99455...
+  if (phone.length === 9) phone = '994' + phone;
+  if (phone.startsWith('0')) phone = '994' + phone.substring(1);
   if (phone.startsWith('55') && phone.length === 9) phone = '994' + phone;
 
   const chatId = `${phone}@c.us`;
@@ -424,14 +601,21 @@ app.get('/__test_send_whatsapp', async (req, res) => {
   console.log(`📍 Client Ready State: ${isReady}`);
 
   if (!isAuthenticated && !isReady) {
-    return res.status(500).send(`<h1>Client Not Ready</h1><p>Auth: ${isAuthenticated}, Ready: ${isReady}</p><p>Please scan QR code first.</p>`);
+    return res.status(503).send(
+      `<h1>Client Not Ready</h1>
+       <p>Auth: ${isAuthenticated}, Ready: ${isReady}</p>
+       <p>Please scan QR code first.</p>`
+    );
   }
 
   try {
-    const sentMsg = await client.sendMessage(chatId, '🤖 Hello! This is a backend self-test message. If you see this, sending works!');
+    const sentMsg = await client.sendMessage(
+      chatId,
+      '🤖 Hello! This is a backend self-test message. If you see this, sending works!'
+    );
     console.log('✅ SENT SUCCESSFULLY via API');
 
-    // 🚀 MANUALLY INJECT INTO CRM (Since event listener might skip API messages)
+    // Manually inject into CRM
     await processMessage({
       ...sentMsg,
       body: sentMsg.body,
@@ -439,38 +623,55 @@ app.get('/__test_send_whatsapp', async (req, res) => {
       from: sentMsg.from,
       to: sentMsg.to,
       id: sentMsg.id,
-      // Manual injection mock
       getContact: async () => ({ name: 'Self-Test (Backend)' })
     }, 'OUTGOING');
 
-    res.send(`<h1>Message Sent & Logged!</h1><p>Target: ${chatId}</p><p>Check CRM Dashboard now.</p>`);
+    res.send(
+      `<h1>Message Sent & Logged!</h1>
+       <p>Target: ${chatId}</p>
+       <p>Check CRM Dashboard now.</p>`
+    );
   } catch (e) {
-    console.error('❌ SEND FAILED ERROR:', e);
+    console.error('❌ SEND FAILED ERROR:', e.message);
     res.status(500).send(`<h1>Send Failed</h1><pre>${e.stack || e.message}</pre>`);
   }
-});
+}));
 
 // START
-client.initialize();
+isInitializing = true;
+client.initialize()
+  .then(() => {
+    console.log('✅ WhatsApp client initialization started');
+  })
+  .catch(err => {
+    console.error('❌ WhatsApp client initialization failed:', err.message);
+    isInitializing = false;
+  });
 
 // SERVE FRONTEND (Monolith Mode)
 const path = require('path');
 const DIST_PATH = path.join(__dirname, '../dist');
 
-// Serve static files
-app.use(express.static(DIST_PATH));
+// Check if dist exists
+const fs = require('fs');
+if (fs.existsSync(DIST_PATH)) {
+  app.use(express.static(DIST_PATH));
 
-// Handle React Routing (SPA Fallback) - Express 5 Compatible
-app.use((req, res, next) => {
-  const file = req.path.split('/').pop();
-  if (file && file.includes('.')) {
-    // If it has an extension but wasn't found in static, 404
-    return res.status(404).send('Not found');
-  }
-  // Otherwise serve index.html
-  res.sendFile(path.join(DIST_PATH, 'index.html'));
-});
+  app.use((req, res, next) => {
+    const file = req.path.split('/').pop();
+    if (file && file.includes('.')) {
+      return res.status(404).send('Not found');
+    }
+    res.sendFile(path.join(DIST_PATH, 'index.html'));
+  });
+} else {
+  console.warn(`⚠️ DIST_PATH not found: ${DIST_PATH}`);
+  console.warn('⚠️ Frontend not served. Make sure to run "npm run build" first.');
+}
 
 server.listen(PORT, '0.0.0.0', () => {
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🌐 Frontend URL: ${FRONTEND_URL}`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });

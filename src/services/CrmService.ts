@@ -24,7 +24,7 @@ class CrmServiceImpl {
     // Check localStorage first for persisted URL
     const saved = localStorage.getItem(SERVER_URL_KEY);
     if (saved) return saved;
-    return this.serverUrl || import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+    return this.serverUrl || (import.meta as any).env.VITE_SERVER_URL || 'http://localhost:3001';
   }
 
   async connectToServer(url: string): Promise<boolean> {
@@ -59,7 +59,7 @@ class CrmServiceImpl {
       });
 
       return new Promise((resolve) => {
-        let timeoutId: number | null = null;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
         this.socket?.on('connect', () => {
           console.log('✅ Connected to backend successfully!');
@@ -274,8 +274,8 @@ class CrmServiceImpl {
     if (this.serverUrl) {
       try {
         const params = new URLSearchParams();
-        if (dateRange?.start) params.append('startDate', dateRange.start.toISOString());
-        if (dateRange?.end) params.append('endDate', dateRange.end.toISOString());
+        if (dateRange?.start) params.append('startDate', dateRange.start);
+        if (dateRange?.end) params.append('endDate', dateRange.end);
 
         const response = await fetch(`${this.serverUrl}/api/leads?${params}`);
         if (response.ok) {
@@ -356,7 +356,7 @@ class CrmServiceImpl {
 
     const newLead: Lead = {
       ...lead,
-      id: crypto.randomUUID(),
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `lead-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };

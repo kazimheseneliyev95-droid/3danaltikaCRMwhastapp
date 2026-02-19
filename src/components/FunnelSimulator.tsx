@@ -253,11 +253,11 @@ export default function FunnelSimulator() {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-slate-500">{useCrmData ? 'Active' : 'Manual'}</span>
-                  <button 
-                    onClick={() => setUseCrmData(!useCrmData)} 
+                  <button
+                    onClick={() => setUseCrmData(!useCrmData)}
                     className={cn("w-8 h-4 rounded-full transition-colors relative", useCrmData ? "bg-green-500" : "bg-slate-700")}
                   >
-                    <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all", useCrmData ? "left-4.5" : "left-0.5")} />
+                    <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all", useCrmData ? "left-[18px]" : "left-0.5")} />
                   </button>
                 </div>
               </div>

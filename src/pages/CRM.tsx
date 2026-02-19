@@ -97,13 +97,13 @@ export default function CRMPage() {
     if (!value) return;
 
     const end = new Date();
-    let start: Date | null = new Date();
+    let start: Date | null = null;
 
     if (value === 'max') {
       start = null; // All time
     } else {
       const days = parseInt(value);
-      start.setDate(end.getDate() - days);
+      start = new Date(end.getTime() - (days * 24 * 60 * 60 * 1000));
     }
 
     const toLocalISO = (date: Date) => {
@@ -206,22 +206,22 @@ export default function CRMPage() {
               <RefreshCcw className="w-4 h-4" /> Test Message
             </button>
 
-            {leads.length > 0 && (
-              <>
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await fetch(`${CrmService.getServerUrl()}/api/debug/test-emit`);
-                      if (res.ok) alert('Test mesajı göndərildi! Saniyələr içində CRM-də görünməlidir.');
-                    } catch (err) {
-                      alert('Serverə qoşulmaq mümkün olmadı.');
-                    }
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm font-medium transition-colors border border-slate-700"
-                >
-                  <Zap className="w-4 h-4 text-yellow-500" />
-                  Soket Testi
-                </button>
+                {leads.length > 0 && (
+                  <>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await fetch(`${CrmService.getServerUrl()}/__test_emit`);
+                          if (res.ok) alert('Test mesajı göndərildi! Saniyələr içində CRM-də görünməlidir.');
+                        } catch (err) {
+                          alert('Serverə qoşulmaq mümkün olmadı.');
+                        }
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm font-medium transition-colors border border-slate-700"
+                    >
+                      <Zap className="w-4 h-4 text-yellow-500" />
+                      Soket Testi
+                    </button>
 
                 <button
                   onClick={handleClearAll}
